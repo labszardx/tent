@@ -20,6 +20,7 @@ public class GroupMapper {
                 .name(model.getName())
                 .description(model.getDescription())
                 .createdAt(model.getCreatedAt())
+                .updatedAt(model.getUpdatedAt())
                 .version(model.getVersion())
                 .members(model.getMembers() == null ? new ArrayList<>() :
                         model.getMembers().stream().map(this::toMemberEntity).collect(Collectors.toList()))
@@ -44,6 +45,7 @@ public class GroupMapper {
                 .name(entity.getName())
                 .description(entity.getDescription())
                 .createdAt(entity.getCreatedAt())
+                .updatedAt(entity.getUpdatedAt())
                 .version(entity.getVersion())
                 .members(entity.getMembers() == null ? new ArrayList<>() :
                         entity.getMembers().stream().map(this::toMemberDomain).collect(Collectors.toList()))

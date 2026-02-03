@@ -18,10 +18,7 @@ import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -39,6 +36,7 @@ public class GroupService {
         Instant now = Instant.now();
         User user = authService.getUserById(owner.getUserId());
         group.setCreatedAt(now);
+        group.setUpdatedAt(group.getCreatedAt());
 
         // 1. Enforce Owner is Super Admin
         owner.setAdmin(true);
@@ -67,6 +65,19 @@ public class GroupService {
         GroupDocument saved = groupRepository.save(entity);
         return mapper.toDomain(saved);
     }
+
+    public Group updateGroup(Group group) {
+
+        GroupDocument retrievedGroupDoc = groupRepository.findById(group.getId())
+                .orElseThrow(() -> new IllegalArgumentException("Group not found"));
+
+        retrievedGroupDoc.setName(group.getName());
+        retrievedGroupDoc.setDescription(group.getDescription());
+        retrievedGroupDoc.setUpdatedAt(Instant.now());
+        GroupDocument saved = groupRepository.save(retrievedGroupDoc);
+        return mapper.toDomain(saved);
+    }
+
 
     public Group addMembers(String groupId, String requesterId, List<Group.GroupMember> newMembers) {
         GroupDocument group = groupRepository.findById(groupId)

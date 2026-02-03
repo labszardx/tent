@@ -31,6 +31,7 @@ public class GroupDocument {
 
     @CreatedDate
     private Instant createdAt;
+    private Instant updatedAt;
 
     @Version
     private Long version;

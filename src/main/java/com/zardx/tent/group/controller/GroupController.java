@@ -24,6 +24,11 @@ public class GroupController {
         return ResponseEntity.ok(groupService.createGroup(group));
     }
 
+    @PutMapping
+    public ResponseEntity<Group> updateGroup(@Valid @RequestBody Group group) {
+        return ResponseEntity.ok(groupService.updateGroup(group));
+    }
+
     // POST /api/v1/groups/{groupId}/members?requesterId=user_alice
     @PostMapping("/{groupId}/members")
     public ResponseEntity<Group> addMember(

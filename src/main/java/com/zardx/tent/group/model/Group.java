@@ -27,6 +27,7 @@ public class Group {
 
     private String description;
     private Instant createdAt;
+    private Instant updatedAt;
     private Long version;
 
     // Roster
