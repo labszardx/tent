@@ -35,13 +35,11 @@ public class GroupDocument {
     @Version
     private Long version;
 
-    private GroupMemberEntity owner;
-
     @Builder.Default
     private List<GroupMemberEntity> members = new ArrayList<>();
 
     @Builder.Default
-    private Map<String, UserStatsEntity> userStats = new HashMap<>();
+    private List<UserStatsEntity> userStats = new ArrayList<>();
 
     @Data
     @Builder
@@ -50,6 +48,7 @@ public class GroupDocument {
     public static class GroupMemberEntity {
         private String userId;
         private boolean isAdmin;
+        private boolean isOwner;
         private Instant joinedAt;
         private String addedBy;
         private MemberStatus status;
@@ -61,6 +60,7 @@ public class GroupDocument {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class UserStatsEntity {
+        private String userId;
         @Builder.Default private BigDecimal paid = BigDecimal.ZERO;
         @Builder.Default private BigDecimal consumed = BigDecimal.ZERO;
         @Builder.Default private BigDecimal balance = BigDecimal.ZERO;

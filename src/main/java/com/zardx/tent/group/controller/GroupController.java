@@ -8,6 +8,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+import java.util.Map;
+
+@CrossOrigin(origins = "*")
 @RestController
 @RequestMapping("/api/v1/groups")
 @RequiredArgsConstructor
@@ -25,9 +29,9 @@ public class GroupController {
     public ResponseEntity<Group> addMember(
             @PathVariable String groupId,
             @RequestParam String requesterId,
-            @RequestBody Group.GroupMember member) {
+            @RequestBody List<Group.GroupMember> members) {
 
-        return ResponseEntity.ok(groupService.addMember(groupId, requesterId, member));
+        return ResponseEntity.ok(groupService.addMembers(groupId, requesterId, members));
     }
 
     @GetMapping("/{id}")
@@ -53,6 +57,14 @@ public class GroupController {
         return ResponseEntity.ok(groupService.getSettlementPlan(groupId, userId));
     }
 
+    // GET /api/v1/groups/{userId}
+    @GetMapping("")
+    public ResponseEntity<List<Group>> getGroupsById(
+            @RequestParam String userId) {
+
+        return ResponseEntity.ok(groupService.getGroupsByUserId(userId));
+    }
+
     // DELETE /api/v1/groups/{groupId}/members/{targetUserId}?requesterId=...
     @DeleteMapping("/{groupId}/members/{targetUserId}")
     public ResponseEntity<Group> removeMember(
@@ -61,5 +73,20 @@ public class GroupController {
             @RequestParam String requesterId) {
 
         return ResponseEntity.ok(groupService.removeMember(groupId, requesterId, targetUserId));
+    }
+
+    @PatchMapping("/{groupId}/members/{userId}/nickname")
+    public ResponseEntity<Group> updateNickname(
+            @PathVariable String groupId,
+            @PathVariable String userId,
+            @RequestBody Map<String, String> request) {
+
+        String newNickname = request.get("nickname");
+        if (newNickname == null || newNickname.trim().isEmpty()) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        Group updatedGroup = groupService.updateMemberNickname(groupId, userId, newNickname);
+        return ResponseEntity.ok(updatedGroup);
     }
 }

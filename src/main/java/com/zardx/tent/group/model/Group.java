@@ -29,9 +29,6 @@ public class Group {
     private Instant createdAt;
     private Long version;
 
-    // The Super Admin
-    private GroupMember owner;
-
     // Roster
     @Builder.Default
     private List<GroupMember> members = new ArrayList<>();
@@ -47,6 +44,7 @@ public class Group {
     public static class GroupMember {
         private String userId;
         private boolean isAdmin;
+        private boolean isOwner;
         private Instant joinedAt;
         private String addedBy;
         private MemberStatus status;

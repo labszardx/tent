@@ -8,16 +8,20 @@ import com.zardx.tent.group.model.SettlementPlan;
 import com.zardx.tent.group.persistence.mongo.GroupDocument;
 import com.zardx.tent.group.persistence.mongo.GroupRepository;
 import com.zardx.tent.transaction.model.Transaction;
+import com.zardx.tent.user.model.User;
+import com.zardx.tent.user.service.AuthService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -25,80 +29,83 @@ import java.util.stream.Collectors;
 public class GroupService {
 
     private final GroupRepository groupRepository;
+    private final AuthService authService;
     private final GroupMapper mapper;
 
     public Group createGroup(Group group) {
-        if (group.getOwner() == null) throw new IllegalArgumentException("Owner is required");
+        if (group.getMembers().get(0) == null) throw new IllegalArgumentException("Owner is required");
 
+        Group.GroupMember owner = group.getMembers().get(0);
         Instant now = Instant.now();
+        User user = authService.getUserById(owner.getUserId());
+        group.setCreatedAt(now);
 
         // 1. Enforce Owner is Super Admin
-        group.getOwner().setAdmin(true);
-        group.getOwner().setJoinedAt(now);
-        group.getOwner().setStatus(MemberStatus.ACTIVE);
-        group.getOwner().setAddedBy("SYSTEM");
+        owner.setAdmin(true);
+        owner.setOwner(true);
+        owner.setJoinedAt(now);
+        owner.setStatus(MemberStatus.ACTIVE);
+        owner.setAddedBy("SYSTEM");
+        owner.setNickname(user.getName());
 
-        // 2. Setup Member List
-        if (group.getMembers() == null) group.setMembers(new ArrayList<>());
 
-        // Remove duplicate owner if present in members list
-        group.getMembers().removeIf(m -> m.getUserId().equals(group.getOwner().getUserId()));
-
-        // Add owner to top of list
-        group.getMembers().add(0, group.getOwner());
-
-        // 3. Initialize status for other members
+        // 3. Initialize status
         group.getMembers().forEach(m -> {
             if (m.getStatus() == null) m.setStatus(MemberStatus.INVITED);
             if (m.getJoinedAt() == null) m.setJoinedAt(now);
         });
 
-        GroupDocument saved = groupRepository.save(mapper.toEntity(group));
+        // 4. Initialize UserStats List (Refactored from Map)
+        GroupDocument entity = mapper.toEntity(group);
+        if (entity.getUserStats() == null) {
+            entity.setUserStats(new ArrayList<>());
+        }
+
+        // Ensure owner has a stats entry
+        initializeStatsForUser(entity, owner.getUserId());
+
+        GroupDocument saved = groupRepository.save(entity);
         return mapper.toDomain(saved);
     }
 
-    public Group addMember(String groupId, String requesterId, Group.GroupMember newMember) {
+    public Group addMembers(String groupId, String requesterId, List<Group.GroupMember> newMembers) {
         GroupDocument group = groupRepository.findById(groupId)
                 .orElseThrow(() -> new IllegalArgumentException("Group not found"));
 
-        // 1. Security: Only Admins can add new people
+        // 1. Security
         boolean isAdmin = group.getMembers().stream()
                 .anyMatch(m -> m.getUserId().equals(requesterId) && m.isAdmin());
 
-        if (!isAdmin) {
-            throw new NotAuthorizedException("Only Admins can add new members.");
+        if (!isAdmin) throw new NotAuthorizedException("Only Admins can add new members.");
+
+        for (Group.GroupMember newMember : newMembers) {
+            // 2. Validation
+            boolean exists = group.getMembers().stream()
+                    .anyMatch(m -> m.getUserId().equals(newMember.getUserId()));
+
+            if (exists) throw new IllegalArgumentException("User " + newMember.getUserId() + " is already in the group.");
+
+            // 3. Initialize New Member
+            newMember.setJoinedAt(Instant.now());
+            newMember.setAddedBy(requesterId);
+            newMember.setStatus(MemberStatus.ACTIVE);
+            newMember.setAdmin(false);
+
+            // 4. Add to Member List
+            GroupDocument.GroupMemberEntity memberEntity = GroupDocument.GroupMemberEntity.builder()
+                    .userId(newMember.getUserId())
+                    .nickname(newMember.getNickname())
+                    .isAdmin(false)
+                    .joinedAt(Instant.now())
+                    .addedBy(requesterId)
+                    .status(MemberStatus.ACTIVE)
+                    .build();
+
+            group.getMembers().add(memberEntity);
+
+            // 5. Initialize Stats (List Logic)
+            initializeStatsForUser(group, newMember.getUserId());
         }
-
-        // 2. Validation: Prevent Duplicates
-        boolean exists = group.getMembers().stream()
-                .anyMatch(m -> m.getUserId().equals(newMember.getUserId()));
-
-        if (exists) {
-            throw new IllegalArgumentException("User is already in the group.");
-        }
-
-        // 3. Initialize New Member
-        newMember.setJoinedAt(Instant.now());
-        newMember.setAddedBy(requesterId);
-        newMember.setStatus(MemberStatus.ACTIVE); // or INVITED
-        newMember.setAdmin(false); // Default to regular user
-
-        // 4. Add to Entity List
-        // We use a helper from the mapper, or manually map since it's a single item
-        GroupDocument.GroupMemberEntity memberEntity = GroupDocument.GroupMemberEntity.builder()
-                .userId(newMember.getUserId())
-                .nickname(newMember.getNickname())
-                .isAdmin(false)
-                .joinedAt(Instant.now())
-                .addedBy(requesterId)
-                .status(MemberStatus.ACTIVE)
-                .build();
-
-        group.getMembers().add(memberEntity);
-
-        // 5. Initialize Stats (Important for the Map!)
-        group.getUserStats().put(newMember.getUserId(), new GroupDocument.UserStatsEntity());
-
         GroupDocument saved = groupRepository.save(group);
         return mapper.toDomain(saved);
     }
@@ -109,20 +116,20 @@ public class GroupService {
                 .orElseThrow(() -> new IllegalArgumentException("Group not found"));
     }
 
-    // --- NIRVANA LOGIC ---
+    // --- NIRVANA LOGIC (Refactored for List) ---
     @Transactional
     public void updateBalances(Transaction txn) {
         GroupDocument group = groupRepository.findById(txn.getGroupId())
                 .orElseThrow(() -> new IllegalArgumentException("Group not found"));
 
         // 1. Credit Payer
-        GroupDocument.UserStatsEntity payerStats = group.getUserStats().computeIfAbsent(txn.getPayerId(), k -> new GroupDocument.UserStatsEntity());
+        GroupDocument.UserStatsEntity payerStats = findOrCreateStats(group, txn.getPayerId());
         payerStats.setPaid(payerStats.getPaid().add(txn.getTotalAmount()));
         payerStats.setBalance(payerStats.getBalance().add(txn.getTotalAmount()));
 
         // 2. Debit Consumers
         for (Transaction.SplitDetail split : txn.getSplitDetails()) {
-            GroupDocument.UserStatsEntity consumerStats = group.getUserStats().computeIfAbsent(split.getUserId(), k -> new GroupDocument.UserStatsEntity());
+            GroupDocument.UserStatsEntity consumerStats = findOrCreateStats(group, split.getUserId());
             consumerStats.setConsumed(consumerStats.getConsumed().add(split.getAmount()));
             consumerStats.setBalance(consumerStats.getBalance().subtract(split.getAmount()));
         }
@@ -139,7 +146,8 @@ public class GroupService {
 
         if (!isRequesterAdmin) throw new NotAuthorizedException("Only Admins can change permissions.");
 
-        if (!makeAdmin && group.getOwner().getUserId().equals(targetUserId)) {
+
+        if (!makeAdmin && getOwner(group).getUserId().equals(targetUserId)) {
             throw new IllegalArgumentException("Cannot remove Admin rights from Owner.");
         }
 
@@ -152,15 +160,17 @@ public class GroupService {
         return mapper.toDomain(groupRepository.save(group));
     }
 
-    // ... imports
-
     public SettlementPlan getSettlementPlan(String groupId, String userId) {
         GroupDocument group = groupRepository.findById(groupId)
                 .orElseThrow(() -> new IllegalArgumentException("Group not found"));
 
-        GroupDocument.UserStatsEntity myStats = group.getUserStats().get(userId);
+        // Find my stats in the list
+        GroupDocument.UserStatsEntity myStats = group.getUserStats().stream()
+                .filter(s -> s.getUserId().equals(userId))
+                .findFirst()
+                .orElse(null);
+
         if (myStats == null) {
-            // New user with no stats
             return SettlementPlan.builder()
                     .userId(userId)
                     .currentBalance(BigDecimal.ZERO)
@@ -175,35 +185,22 @@ public class GroupService {
 
         // --- SCENARIO 1: I OWE MONEY (My Balance is Negative) ---
         if (myBalance.compareTo(BigDecimal.ZERO) < 0) {
-            BigDecimal myDebt = myBalance.abs(); // e.g., -50 -> 50
+            BigDecimal myDebt = myBalance.abs();
 
-            // Find people who are OWED money (Positive balance) to pay them
-            group.getUserStats().entrySet().stream()
-                    .filter(e -> e.getValue().getBalance().compareTo(BigDecimal.ZERO) > 0) // Filter Creditors
-                    .sorted((a, b) -> b.getValue().getBalance().compareTo(a.getValue().getBalance())) // Sort Max Creditors first
-                    .forEach(creditor -> {
-                        // Logic: I pay them whatever is smaller: My Debt vs Their Receivable
-                        // Note: This is a simplifed projection. In a real greedy algo for the whole graph, 
-                        // this might vary, but for a personalized view, paying the biggest creditor is safe.
-                        // To be mathematically perfect, we usually run the whole group graph simplification, 
-                        // but this "Direct Greedy" approach works for 99% of travel groups.
+            // Find creditors (Positive Balance) from the List
+            List<GroupDocument.UserStatsEntity> creditors = group.getUserStats().stream()
+                    .filter(s -> s.getBalance().compareTo(BigDecimal.ZERO) > 0)
+                    .sorted(Comparator.comparing(GroupDocument.UserStatsEntity::getBalance).reversed()) // Biggest creditors first
+                    .collect(Collectors.toList());
 
-                        // Since we can't mutate 'myDebt' inside the stream easily, we usually iterate with a loop
-                        // (See implemented loop below in "Common Logic")
-                    });
-
-            // Simplified Greedy Loop for Debtors
-            for (Map.Entry<String, GroupDocument.UserStatsEntity> creditor : group.getUserStats().entrySet()) {
+            for (GroupDocument.UserStatsEntity creditor : creditors) {
                 if (myDebt.compareTo(BigDecimal.ZERO) <= 0) break;
 
-                BigDecimal creditorBalance = creditor.getValue().getBalance();
-                if (creditorBalance.compareTo(BigDecimal.ZERO) <= 0) continue; // Skip other debtors
+                BigDecimal payAmount = myDebt.min(creditor.getBalance());
+                String nick = getNickname(group, creditor.getUserId());
 
-                BigDecimal payAmount = myDebt.min(creditorBalance);
-
-                String nick = getNickname(group, creditor.getKey());
                 payments.add(SettlementPlan.PaymentAction.builder()
-                        .otherUserId(creditor.getKey())
+                        .otherUserId(creditor.getUserId())
                         .otherUserNickname(nick)
                         .amount(payAmount)
                         .build());
@@ -214,26 +211,23 @@ public class GroupService {
 
         // --- SCENARIO 2: PEOPLE OWE ME (My Balance is Positive) ---
         else if (myBalance.compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal myReceivable = myBalance; // e.g., +100
+            BigDecimal myReceivable = myBalance;
 
-            // Find people who OWE money (Negative balance) to collect from them
-            // Sort by "Biggest Debtors First" (Most negative balance)
-            List<Map.Entry<String, GroupDocument.UserStatsEntity>> debtors = group.getUserStats().entrySet().stream()
-                    .filter(e -> e.getValue().getBalance().compareTo(BigDecimal.ZERO) < 0)
-                    .sorted((a, b) -> a.getValue().getBalance().compareTo(b.getValue().getBalance())) // Ascending (-100 before -10)
+            // Find debtors (Negative Balance) from the List
+            List<GroupDocument.UserStatsEntity> debtors = group.getUserStats().stream()
+                    .filter(s -> s.getBalance().compareTo(BigDecimal.ZERO) < 0)
+                    .sorted(Comparator.comparing(GroupDocument.UserStatsEntity::getBalance)) // Ascending (Most negative first)
                     .collect(Collectors.toList());
 
-            for (Map.Entry<String, GroupDocument.UserStatsEntity> debtor : debtors) {
+            for (GroupDocument.UserStatsEntity debtor : debtors) {
                 if (myReceivable.compareTo(BigDecimal.ZERO) <= 0) break;
 
-                BigDecimal debtorOwes = debtor.getValue().getBalance().abs(); // -40 -> 40
-
-                // Collect whichever is smaller: What they owe OR What I am owed
+                BigDecimal debtorOwes = debtor.getBalance().abs();
                 BigDecimal collectAmount = myReceivable.min(debtorOwes);
+                String nick = getNickname(group, debtor.getUserId());
 
-                String nick = getNickname(group, debtor.getKey());
                 incoming.add(SettlementPlan.PaymentAction.builder()
-                        .otherUserId(debtor.getKey())
+                        .otherUserId(debtor.getUserId())
                         .otherUserNickname(nick)
                         .amount(collectAmount)
                         .build());
@@ -245,28 +239,16 @@ public class GroupService {
         return SettlementPlan.builder()
                 .userId(userId)
                 .currentBalance(myBalance)
-                .suggestedPayments(payments)   // Populated if I owe
-                .expectedIncoming(incoming)    // Populated if I am owed
+                .suggestedPayments(payments)
+                .expectedIncoming(incoming)
                 .build();
     }
-
-    // Helper to fetch nickname
-    private String getNickname(GroupDocument group, String userId) {
-        return group.getMembers().stream()
-                .filter(m -> m.getUserId().equals(userId))
-                .findFirst()                                      // Returns Optional<Member>
-                .map(GroupDocument.GroupMemberEntity::getNickname) // Returns Optional<String> (Empty if nick is null)
-                .filter(StringUtils::isEmpty) // Ensure it's not just whitespace
-                .orElse(userId);                                  // Fallback for all failure cases
-    }
-
-    // ... inside GroupService ...
 
     public Group removeMember(String groupId, String requesterId, String targetUserId) {
         GroupDocument group = groupRepository.findById(groupId)
                 .orElseThrow(() -> new IllegalArgumentException("Group not found"));
 
-        // 1. Authorization Check
+        // 1. Auth Checks
         boolean isSelfRemoval = requesterId.equals(targetUserId);
         boolean isRequesterAdmin = group.getMembers().stream()
                 .anyMatch(m -> m.getUserId().equals(requesterId) && m.isAdmin());
@@ -274,33 +256,96 @@ public class GroupService {
         if (!isSelfRemoval && !isRequesterAdmin) {
             throw new NotAuthorizedException("You do not have permission to remove this member.");
         }
-
-        // 2. Owner Safety Check
-        // The owner cannot simply "leave". They must delete the group or transfer ownership.
-        if (group.getOwner().getUserId().equals(targetUserId)) {
-            throw new IllegalArgumentException("The Owner cannot leave the group. Delete the group or transfer ownership first.");
+        if (getOwner(group).getUserId().equals(targetUserId)) {
+            throw new IllegalArgumentException("The Owner cannot leave the group.");
         }
 
-        // 3. CRITICAL: Zero Balance Check
-        // If the map has no entry, balance is considered 0.
-        // If entry exists, check the BigDecimals.
-        GroupDocument.UserStatsEntity stats = group.getUserStats().get(targetUserId);
+        // 2. Balance Check (List Logic)
+        GroupDocument.UserStatsEntity stats = group.getUserStats().stream()
+                .filter(s -> s.getUserId().equals(targetUserId))
+                .findFirst()
+                .orElse(null);
+
         if (stats != null && stats.getBalance().compareTo(BigDecimal.ZERO) != 0) {
-            if (stats.getBalance().compareTo(BigDecimal.ZERO) > 0) {
-                throw new IllegalArgumentException("Cannot leave: " + targetUserId + " is owed " + stats.getBalance() + ". Settle first.");
-            } else {
-                throw new IllegalArgumentException("Cannot leave: " + targetUserId + " owes " + stats.getBalance().abs() + ". Settle first.");
+            throw new IllegalArgumentException("Cannot leave: User has non-zero balance (" + stats.getBalance() + "). Settle first.");
+        }
+
+        // 3. Remove from Members
+        boolean removed = group.getMembers().removeIf(m -> m.getUserId().equals(targetUserId));
+        if (!removed) throw new IllegalArgumentException("User not found in group.");
+
+        // 4. Remove from Stats List
+        group.getUserStats().removeIf(s -> s.getUserId().equals(targetUserId));
+
+        GroupDocument saved = groupRepository.save(group);
+        return mapper.toDomain(saved);
+    }
+
+    public List<Group> getGroupsByUserId(String userId) {
+        List<GroupDocument> byMembersUserId = groupRepository.findByMembersUserId(userId);
+        if (CollectionUtils.isEmpty(byMembersUserId)) return Collections.emptyList();
+
+        return byMembersUserId.stream()
+                .map(mapper::toDomain)
+                .collect(Collectors.toList());
+    }
+
+    // --- HELPER METHODS ---
+
+    private String getNickname(GroupDocument group, String userId) {
+        return group.getMembers().stream()
+                .filter(m -> m.getUserId().equals(userId))
+                .findFirst()
+                .map(GroupDocument.GroupMemberEntity::getNickname)
+                .filter(nick -> !nick.trim().isEmpty()) // Ensure it's not null or empty
+                .orElse(userId); // Fallback to email if no nickname is set
+    }
+
+    private GroupDocument.UserStatsEntity findOrCreateStats(GroupDocument group, String userId) {
+        // Initialize list if null (safety check)
+        if (group.getUserStats() == null) {
+            group.setUserStats(new ArrayList<>());
+        }
+
+        return group.getUserStats().stream()
+                .filter(s -> s.getUserId().equals(userId))
+                .findFirst()
+                .orElseGet(() -> {
+                    GroupDocument.UserStatsEntity newStats = new GroupDocument.UserStatsEntity();
+                    newStats.setUserId(userId);
+                    newStats.setBalance(BigDecimal.ZERO);
+                    newStats.setPaid(BigDecimal.ZERO);
+                    newStats.setConsumed(BigDecimal.ZERO);
+                    group.getUserStats().add(newStats);
+                    return newStats;
+                });
+    }
+
+    private void initializeStatsForUser(GroupDocument group, String userId) {
+        findOrCreateStats(group, userId);
+    }
+
+    private GroupDocument.GroupMemberEntity getOwner(GroupDocument group) {
+        for (GroupDocument.GroupMemberEntity member : group.getMembers()) {
+            if (member.isOwner()) {
+                return member;
             }
         }
+        return null;
+    }
 
-        // 4. Execute Removal
-        boolean removed = group.getMembers().removeIf(m -> m.getUserId().equals(targetUserId));
-        if (!removed) {
-            throw new IllegalArgumentException("User not found in group.");
-        }
+    public Group updateMemberNickname(String groupId, String userId, String newNickname) {
+        GroupDocument group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new IllegalArgumentException("Group not found"));
 
-        // Clean up stats map to keep document tidy
-        group.getUserStats().remove(targetUserId);
+        // Find the member in the list and update the nickname
+        group.getMembers().stream()
+                .filter(m -> m.getUserId().equalsIgnoreCase(userId))
+                .findFirst()
+                .ifPresentOrElse(
+                        member -> member.setNickname(newNickname),
+                        () -> { throw new IllegalArgumentException("User not found in this group"); }
+                );
 
         GroupDocument saved = groupRepository.save(group);
         return mapper.toDomain(saved);

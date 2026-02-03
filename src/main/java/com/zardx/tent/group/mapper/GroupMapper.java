@@ -21,14 +21,18 @@ public class GroupMapper {
                 .description(model.getDescription())
                 .createdAt(model.getCreatedAt())
                 .version(model.getVersion())
-                .owner(toMemberEntity(model.getOwner()))
                 .members(model.getMembers() == null ? new ArrayList<>() :
                         model.getMembers().stream().map(this::toMemberEntity).collect(Collectors.toList()))
-                .userStats(model.getUserStats() == null ? new HashMap<>() :
-                        model.getUserStats().entrySet().stream().collect(Collectors.toMap(
-                                Map.Entry::getKey,
-                                e -> toStatsEntity(e.getValue())
-                        )))
+
+                // --- FIX: Map (Domain) -> List (Entity) ---
+                .userStats(model.getUserStats() == null ? new ArrayList<>() :
+                        model.getUserStats().entrySet().stream()
+                                .map(entry -> {
+                                    GroupDocument.UserStatsEntity stats = toStatsEntity(entry.getValue());
+                                    stats.setUserId(entry.getKey()); // Important: Set the ID from the Map Key
+                                    return stats;
+                                })
+                                .collect(Collectors.toList()))
                 .build();
     }
 
@@ -41,13 +45,14 @@ public class GroupMapper {
                 .description(entity.getDescription())
                 .createdAt(entity.getCreatedAt())
                 .version(entity.getVersion())
-                .owner(toMemberDomain(entity.getOwner()))
                 .members(entity.getMembers() == null ? new ArrayList<>() :
                         entity.getMembers().stream().map(this::toMemberDomain).collect(Collectors.toList()))
+
+                // --- FIX: List (Entity) -> Map (Domain) ---
                 .userStats(entity.getUserStats() == null ? new HashMap<>() :
-                        entity.getUserStats().entrySet().stream().collect(Collectors.toMap(
-                                Map.Entry::getKey,
-                                e -> toStatsDomain(e.getValue())
+                        entity.getUserStats().stream().collect(Collectors.toMap(
+                                GroupDocument.UserStatsEntity::getUserId, // Key = userId from the object
+                                this::toStatsDomain
                         )))
                 .build();
     }
@@ -55,18 +60,28 @@ public class GroupMapper {
     // --- Helpers ---
     private GroupDocument.GroupMemberEntity toMemberEntity(Group.GroupMember m) {
         return m == null ? null : GroupDocument.GroupMemberEntity.builder()
-                .userId(m.getUserId()).isAdmin(m.isAdmin()).joinedAt(m.getJoinedAt())
+                .userId(m.getUserId()).isAdmin(m.isAdmin()).isOwner(m.isOwner()).joinedAt(m.getJoinedAt())
                 .addedBy(m.getAddedBy()).status(m.getStatus()).nickname(m.getNickname()).build();
     }
     private Group.GroupMember toMemberDomain(GroupDocument.GroupMemberEntity e) {
         return e == null ? null : Group.GroupMember.builder()
-                .userId(e.getUserId()).isAdmin(e.isAdmin()).joinedAt(e.getJoinedAt())
+                .userId(e.getUserId()).isAdmin(e.isAdmin()).isOwner(e.isOwner()).joinedAt(e.getJoinedAt())
                 .addedBy(e.getAddedBy()).status(e.getStatus()).nickname(e.getNickname()).build();
     }
+
     private GroupDocument.UserStatsEntity toStatsEntity(Group.UserStats s) {
-        return GroupDocument.UserStatsEntity.builder().paid(s.getPaid()).consumed(s.getConsumed()).balance(s.getBalance()).build();
+        // userId is set in the stream above
+        return GroupDocument.UserStatsEntity.builder()
+                .paid(s.getPaid())
+                .consumed(s.getConsumed())
+                .balance(s.getBalance())
+                .build();
     }
     private Group.UserStats toStatsDomain(GroupDocument.UserStatsEntity e) {
-        return Group.UserStats.builder().paid(e.getPaid()).consumed(e.getConsumed()).balance(e.getBalance()).build();
+        return Group.UserStats.builder()
+                .paid(e.getPaid())
+                .consumed(e.getConsumed())
+                .balance(e.getBalance())
+                .build();
     }
 }

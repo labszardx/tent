@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -28,6 +29,7 @@ public class TransactionService {
 
     @Transactional
     public Transaction createTransaction(Transaction transaction) {
+        transaction.setCreatedAt(Instant.now());
         // 1. Fetch Group & Payer
         GroupDocument group = groupRepository.findById(transaction.getGroupId())
                 .orElseThrow(() -> new IllegalArgumentException("Group not found"));
