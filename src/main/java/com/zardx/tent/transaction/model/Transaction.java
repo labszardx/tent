@@ -21,14 +21,12 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Transaction {
-
-    // Null on Request, Populated on Response
     private String id;
 
     @NotBlank(message = "Group ID is required")
     private String groupId;
 
-    @NotNull(message = "Transaction Type is required")
+    @NotNull(message = "Type is required")
     private TransactionType type;
 
     private Category category;
@@ -36,29 +34,21 @@ public class Transaction {
     @NotBlank(message = "Payer ID is required")
     private String payerId;
 
-    @NotNull
-    @DecimalMin(value = "0.01", message = "Amount must be positive")
+    @NotNull @DecimalMin("0.01")
     private BigDecimal totalAmount;
 
     private String description;
-
-    // Null on Request (set by Server), Populated on Response
     private Instant createdAt;
 
-    @NotEmpty(message = "Split details are required")
-    @Valid // Cascades validation to the list items
+    @NotEmpty @Valid
     private List<SplitDetail> splitDetails;
 
     @Data
+    @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    @Builder
     public static class SplitDetail {
-        @NotBlank(message = "User ID in split is required")
-        private String userId;
-
-        @NotNull
-        @DecimalMin(value = "0.01")
-        private BigDecimal amount;
+        @NotBlank private String userId;
+        @NotNull @DecimalMin("0.01") private BigDecimal amount;
     }
 }

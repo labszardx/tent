@@ -1,9 +1,7 @@
 package com.zardx.tent.transaction.persistence.mongo;
 
-// IMPORT THE SHARED ENUMS
 import com.zardx.tent.common.model.Category;
 import com.zardx.tent.common.model.TransactionType;
-
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -30,10 +28,8 @@ public class TransactionDocument {
     @Id
     private String id;
     private String groupId;
-
-    private TransactionType type; // Persists as String (default) or Ordinal
+    private TransactionType type;
     private Category category;
-
     private String payerId;
     private BigDecimal totalAmount;
     private String description;
@@ -44,9 +40,9 @@ public class TransactionDocument {
     private List<SplitDetailDocument> splitDetails;
 
     @Data
+    @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    @Builder
     public static class SplitDetailDocument {
         private String userId;
         private BigDecimal amount;

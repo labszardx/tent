@@ -7,6 +7,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/v1/transactions")
 @RequiredArgsConstructor
@@ -16,7 +18,15 @@ public class TransactionController {
 
     @PostMapping
     public ResponseEntity<Transaction> create(@Valid @RequestBody Transaction transaction) {
-        Transaction created = transactionService.createTransaction(transaction);
-        return ResponseEntity.ok(created);
+        return ResponseEntity.ok(transactionService.createTransaction(transaction));
+    }
+
+    // ... inside TransactionController ...
+
+    // GET /api/v1/transactions/group/{groupId}
+    @GetMapping("/group/{groupId}")
+    public ResponseEntity<List<Transaction>> getByGroup(@PathVariable String groupId) {
+        List<Transaction> transactions = transactionService.getTransactionsByGroup(groupId);
+        return ResponseEntity.ok(transactions);
     }
 }
