@@ -1,5 +1,6 @@
 package com.zardx.tent.notification.service;
 
+import com.zardx.tent.common.model.Category;
 import com.zardx.tent.group.model.Group;
 import com.zardx.tent.group.service.GroupService;
 import com.zardx.tent.notification.persistence.mongo.Activity;
@@ -32,26 +33,41 @@ public class ActivityService {
     }
 
     public void sendNotificationForTxnCreated(TransactionDocument savedDoc) {
-        // 2. Fetch the actor's nickname for a friendly message
+        // 1. Fetch group and actor details
         Group group = groupService.getGroup(savedDoc.getGroupId());
-        Group.GroupMember addedByMember = group.getMembers().stream().filter(v -> v.getUserId().equals(savedDoc.getCreatedBy())).findFirst().get();
+        Group.GroupMember addedByMember = group.getMembers().stream()
+                .filter(v -> v.getUserId().equals(savedDoc.getCreatedBy()))
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("Member not found"));
 
         String actorName = addedByMember.getNickname();
+        String message;
+        Activity.ActivityType activityType;
 
-        // 3. Construct a human-readable message
-        // Example: "Rahul added an expense of ₹500 for Dinner"
-        String message = String.format("%s added an expense of ₹%s for %s",
-                actorName,
-                savedDoc.getTotalAmount().toPlainString(),
-                savedDoc.getDescription());
+        // 2. Branch logic based on category/type
+        if (Category.SETTLEMENT.equals(savedDoc.getCategory())) {
+            // Example: "Rahul recorded a payment of ₹500: Paid via Cash"
+            message = String.format("%s recorded a payment of ₹%s: %s",
+                    actorName,
+                    savedDoc.getTotalAmount().stripTrailingZeros().toPlainString(),
+                    savedDoc.getDescription());
+            activityType = Activity.ActivityType.SETTLEMENT_COMPLETED;
+        } else {
+            // Standard Expense: "Rahul added an expense of ₹500 for Dinner"
+            message = String.format("%s added an expense of ₹%s for %s",
+                    actorName,
+                    savedDoc.getTotalAmount().stripTrailingZeros().toPlainString(),
+                    savedDoc.getDescription());
+            activityType = Activity.ActivityType.TRANSACTION_CREATED;
+        }
 
-        // 4. Log the activity perfectly
+        // 3. Log the activity with correct type and message
         addActivity(
                 savedDoc.getGroupId(),
-                savedDoc.getId(),       // targetId is the new Txn ID
-                savedDoc.getCreatedBy(), // actorId is the one who saved it
+                savedDoc.getId(),
+                savedDoc.getCreatedBy(),
                 actorName,
-                Activity.ActivityType.TRANSACTION_CREATED,
+                activityType,
                 message
         );
     }
