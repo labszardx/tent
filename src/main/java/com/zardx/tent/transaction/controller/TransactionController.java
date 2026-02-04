@@ -22,6 +22,11 @@ public class TransactionController {
         return ResponseEntity.ok(transactionService.createTransaction(transaction));
     }
 
+    @GetMapping("/{transactionId}")
+    public ResponseEntity<Transaction> getById(@PathVariable String transactionId) {
+        return ResponseEntity.ok(transactionService.getTransaction(transactionId));
+    }
+
     // ... inside TransactionController ...
 
     // GET /api/v1/transactions/group/{groupId}

@@ -62,6 +62,10 @@ public class TransactionService {
         return savedModel;
     }
 
+    public Transaction getTransaction(String transactionId) {
+        return mapper.toDomain(transactionRepository.findById(transactionId).get());
+    }
+
     public List<Transaction> getTransactionsByGroup(String groupId) {
         return transactionRepository.findByGroupIdOrderByCreatedAtDesc(groupId)
                 .stream()
