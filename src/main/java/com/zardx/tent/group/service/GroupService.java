@@ -264,11 +264,18 @@ public class GroupService {
         boolean isRequesterAdmin = group.getMembers().stream()
                 .anyMatch(m -> m.getUserId().equals(requesterId) && m.isAdmin());
 
+        boolean isTargetUserAdmin = group.getMembers().stream()
+                .anyMatch(m -> m.getUserId().equals(targetUserId) && m.isAdmin());
+
         if (!isSelfRemoval && !isRequesterAdmin) {
             throw new NotAuthorizedException("You do not have permission to remove this member.");
         }
         if (getOwner(group).getUserId().equals(targetUserId)) {
             throw new IllegalArgumentException("The Owner cannot leave the group.");
+        }
+
+        if (!isSelfRemoval && isTargetUserAdmin) {
+            throw new NotAuthorizedException("You do not have permission to remove this member.");
         }
 
         // 2. Balance Check (List Logic)
