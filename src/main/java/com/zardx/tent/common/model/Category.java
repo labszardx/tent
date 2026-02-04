@@ -4,7 +4,9 @@ public enum Category {
     FOOD,
     TRAVEL,
     ACCOMMODATION,
-    ENTERTAINMENT,
-    SETTLEMENT, // Special category for repayments
+    UTILITY,
+    HOUSEHOLD,
+    PETROL,
+    SETTLEMENT,
     OTHER
 }
