@@ -38,7 +38,9 @@ public class Transaction {
     private BigDecimal totalAmount;
 
     private String description;
+
     private Instant createdAt;
+    private String createdBy;
 
     @NotEmpty @Valid
     private List<SplitDetail> splitDetails;

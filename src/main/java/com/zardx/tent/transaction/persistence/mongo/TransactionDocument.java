@@ -36,6 +36,7 @@ public class TransactionDocument {
 
     @CreatedDate
     private Instant createdAt;
+    private String createdBy;
 
     private List<SplitDetailDocument> splitDetails;
 

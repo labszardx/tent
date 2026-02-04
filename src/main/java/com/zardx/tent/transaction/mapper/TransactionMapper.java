@@ -19,6 +19,7 @@ public class TransactionMapper {
                 .totalAmount(model.getTotalAmount())
                 .description(model.getDescription())
                 .createdAt(model.getCreatedAt())
+                .createdBy(model.getCreatedBy())
                 .splitDetails(model.getSplitDetails() != null ?
                         model.getSplitDetails().stream()
                                 .map(s -> new TransactionDocument.SplitDetailDocument(s.getUserId(), s.getAmount()))
@@ -36,6 +37,7 @@ public class TransactionMapper {
                 .payerId(entity.getPayerId())
                 .totalAmount(entity.getTotalAmount())
                 .description(entity.getDescription())
+                .createdBy(entity.getCreatedBy())
                 .createdAt(entity.getCreatedAt())
                 .splitDetails(entity.getSplitDetails().stream()
                         .map(s -> new Transaction.SplitDetail(s.getUserId(), s.getAmount()))
