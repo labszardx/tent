@@ -62,6 +62,13 @@ public class GroupController {
         return ResponseEntity.ok(groupService.getSettlementPlan(groupId, userId));
     }
 
+    @GetMapping("/{groupId}/settlements")
+    public ResponseEntity<Map<String,SettlementPlan>> getGlobalSettlementPlan(
+            @PathVariable String groupId) {
+
+        return ResponseEntity.ok(groupService.getGlobalSettlementPlan(groupId));
+    }
+
     // GET /api/v1/groups/{userId}
     @GetMapping("")
     public ResponseEntity<List<Group>> getGroupsById(

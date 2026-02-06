@@ -14,7 +14,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
-import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -172,87 +171,106 @@ public class GroupService {
     }
 
     public SettlementPlan getSettlementPlan(String groupId, String userId) {
-        GroupDocument group = groupRepository.findById(groupId)
-                .orElseThrow(() -> new IllegalArgumentException("Group not found"));
+        Map<String, SettlementPlan> globalSettlementPlan = getGlobalSettlementPlan(groupId);
+        return globalSettlementPlan.get(userId);
+    }
 
-        // Find my stats in the list
-        GroupDocument.UserStatsEntity myStats = group.getUserStats().stream()
-                .filter(s -> s.getUserId().equals(userId))
-                .findFirst()
-                .orElse(null);
+    public Map<String, SettlementPlan> getGlobalSettlementPlan(String groupId) {
 
-        if (myStats == null) {
-            return SettlementPlan.builder()
-                    .userId(userId)
-                    .currentBalance(BigDecimal.ZERO)
+        GroupDocument group = groupRepository.findById(groupId).orElseThrow(() -> new IllegalArgumentException("Group not found"));
+
+        Map<String, SettlementPlan> responseMap = new HashMap<>();
+
+        // 1. Internal Helper to track running balances without modifying DB Entities
+        class MutableNode {
+            String userId;
+            BigDecimal balance;
+            MutableNode(String u, BigDecimal b) { userId = u; balance = b; }
+        }
+
+        List<MutableNode> debtors = new ArrayList<>();
+        List<MutableNode> creditors = new ArrayList<>();
+
+        // 2. Initialize Plans and Separate Users
+        // Assuming group.getUserStats() returns List<GroupDocument.UserStatsEntity>
+        for (GroupDocument.UserStatsEntity stats : group.getUserStats()) {
+            BigDecimal bal = stats.getBalance();
+            String uId = stats.getUserId();
+
+            // Prepare the empty response object
+            responseMap.put(uId, SettlementPlan.builder()
+                    .userId(uId)
+                    .currentBalance(bal)
                     .suggestedPayments(new ArrayList<>())
                     .expectedIncoming(new ArrayList<>())
-                    .build();
-        }
+                    .build());
 
-        BigDecimal myBalance = myStats.getBalance();
-        List<SettlementPlan.PaymentAction> payments = new ArrayList<>();
-        List<SettlementPlan.PaymentAction> incoming = new ArrayList<>();
-
-        // --- SCENARIO 1: I OWE MONEY (My Balance is Negative) ---
-        if (myBalance.compareTo(BigDecimal.ZERO) < 0) {
-            BigDecimal myDebt = myBalance.abs();
-
-            // Find creditors (Positive Balance) from the List
-            List<GroupDocument.UserStatsEntity> creditors = group.getUserStats().stream()
-                    .filter(s -> s.getBalance().compareTo(BigDecimal.ZERO) > 0)
-                    .sorted(Comparator.comparing(GroupDocument.UserStatsEntity::getBalance).reversed()) // Biggest creditors first
-                    .collect(Collectors.toList());
-
-            for (GroupDocument.UserStatsEntity creditor : creditors) {
-                if (myDebt.compareTo(BigDecimal.ZERO) <= 0) break;
-
-                BigDecimal payAmount = myDebt.min(creditor.getBalance());
-                String nick = getNickname(group, creditor.getUserId());
-
-                payments.add(SettlementPlan.PaymentAction.builder()
-                        .otherUserId(creditor.getUserId())
-                        .otherUserNickname(nick)
-                        .amount(payAmount)
-                        .build());
-
-                myDebt = myDebt.subtract(payAmount);
+            // Categorize
+            if (bal.compareTo(BigDecimal.ZERO) < 0) {
+                debtors.add(new MutableNode(uId, bal));
+            } else if (bal.compareTo(BigDecimal.ZERO) > 0) {
+                creditors.add(new MutableNode(uId, bal));
             }
         }
 
-        // --- SCENARIO 2: PEOPLE OWE ME (My Balance is Positive) ---
-        else if (myBalance.compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal myReceivable = myBalance;
+        // 3. Sort by Magnitude (Largest debts/credits first to simplify graph)
+        // Debtors: Ascending (-100, -50, -10)
+        debtors.sort(Comparator.comparing(n -> n.balance));
+        // Creditors: Descending (100, 50, 10)
+        creditors.sort((n1, n2) -> n2.balance.compareTo(n1.balance));
 
-            // Find debtors (Negative Balance) from the List
-            List<GroupDocument.UserStatsEntity> debtors = group.getUserStats().stream()
-                    .filter(s -> s.getBalance().compareTo(BigDecimal.ZERO) < 0)
-                    .sorted(Comparator.comparing(GroupDocument.UserStatsEntity::getBalance)) // Ascending (Most negative first)
-                    .collect(Collectors.toList());
+        int dIndex = 0;
+        int cIndex = 0;
 
-            for (GroupDocument.UserStatsEntity debtor : debtors) {
-                if (myReceivable.compareTo(BigDecimal.ZERO) <= 0) break;
+        // 4. Greedy Matching Algorithm
+        while (dIndex < debtors.size() && cIndex < creditors.size()) {
+            MutableNode debtor = debtors.get(dIndex);
+            MutableNode creditor = creditors.get(cIndex);
 
-                BigDecimal debtorOwes = debtor.getBalance().abs();
-                BigDecimal collectAmount = myReceivable.min(debtorOwes);
-                String nick = getNickname(group, debtor.getUserId());
+            // Math: Minimize transactions. Settle the smaller of the two absolute values.
+            BigDecimal debtAbs = debtor.balance.abs();
+            BigDecimal credit = creditor.balance;
 
-                incoming.add(SettlementPlan.PaymentAction.builder()
-                        .otherUserId(debtor.getUserId())
-                        .otherUserNickname(nick)
-                        .amount(collectAmount)
-                        .build());
+            BigDecimal amountToSettle = (debtAbs.compareTo(credit) < 0) ? debtAbs : credit;
 
-                myReceivable = myReceivable.subtract(collectAmount);
+            // Apply Math
+            debtor.balance = debtor.balance.add(amountToSettle);
+            creditor.balance = creditor.balance.subtract(amountToSettle);
+
+            // Get Nicknames (Helper method assumed existing)
+            String debtorNick = getNickname(group, debtor.userId);
+            String creditorNick = getNickname(group, creditor.userId);
+
+            // 5. Update Response Map (Both sides of the transaction)
+
+            // A. Add to Debtor's "suggestedPayments"
+            responseMap.get(debtor.userId).getSuggestedPayments().add(
+                    SettlementPlan.PaymentAction.builder()
+                            .otherUserId(creditor.userId)
+                            .otherUserNickname(creditorNick)
+                            .amount(amountToSettle)
+                            .build()
+            );
+
+            // B. Add to Creditor's "expectedIncoming"
+            responseMap.get(creditor.userId).getExpectedIncoming().add(
+                    SettlementPlan.PaymentAction.builder()
+                            .otherUserId(debtor.userId)
+                            .otherUserNickname(debtorNick)
+                            .amount(amountToSettle)
+                            .build()
+            );
+
+            // 6. Check if settled (using 0.01 threshold for BigDecimal safety)
+            if (debtor.balance.compareTo(BigDecimal.ZERO) == 0) {
+                dIndex++;
+            }
+            if (creditor.balance.compareTo(BigDecimal.ZERO) == 0) {
+                cIndex++;
             }
         }
 
-        return SettlementPlan.builder()
-                .userId(userId)
-                .currentBalance(myBalance)
-                .suggestedPayments(payments)
-                .expectedIncoming(incoming)
-                .build();
+        return responseMap;
     }
 
     public Group removeMember(String groupId, String requesterId, String targetUserId) {
