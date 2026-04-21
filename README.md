@@ -1,1 +1,1 @@
-# tent
+# tent : Manage expenses like a pro
