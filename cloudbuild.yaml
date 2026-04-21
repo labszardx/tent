@@ -1,0 +1,102 @@
+# Cloud Build CI/CD pipeline for the tent Spring Boot backend.
+#
+# Trigger: configured in Cloud Build to fire on push to the `development` branch
+# (the branch filter lives on the trigger, not in this file).
+#
+# Runs as a custom service account (declared in `serviceAccount:` below).
+# That same SA is used as the Cloud Run runtime identity.
+#
+# IAM roles the custom SA (tent-875@...) needs:
+#   - roles/logging.logWriter          (required for custom SAs; builds fail without it)
+#   - roles/artifactregistry.writer    (push images to Artifact Registry)
+#   - roles/run.admin                  (deploy / update the Cloud Run service)
+#   - roles/iam.serviceAccountUser     (on itself — because it also acts as the Run runtime SA)
+#
+# One-time GCP setup before the first run:
+#   1. Enable APIs: cloudbuild, artifactregistry, run, iam.
+#   2. Create the Artifact Registry repo:
+#        gcloud artifacts repositories create <_AR_REPO> \
+#          --repository-format=docker --location=<_REGION>
+#   3. Create the Cloud Build trigger pointed at this file with:
+#        - branch regex: ^development$
+#        - substitutions: _REGION, _AR_REPO, _SERVICE_NAME (all required, see below)
+#        - service account: tent-875@${PROJECT_ID}.iam.gserviceaccount.com
+
+serviceAccount: projects/${PROJECT_ID}/serviceAccounts/tent-875@${PROJECT_ID}.iam.gserviceaccount.com
+
+steps:
+  # 1. Build the container, tagging with both the commit SHA and `latest`.
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_SERVICE_NAME}:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_SERVICE_NAME}:latest
+      - .
+
+  # 2. Push the immutable SHA-tagged image (Cloud Run deploys this one).
+  - id: push-sha
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_SERVICE_NAME}:${SHORT_SHA}
+    waitFor: [build]
+
+  # 3. Deploy the freshly-pushed SHA image to Cloud Run.
+  #    `--service-account` pins the Cloud Run runtime identity to the same custom SA.
+  #    `--cpu-boost` is free and cuts JVM cold-start latency.
+  #    The `latest` tag is pushed by the `images:` block after all steps succeed.
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_NAME}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_SERVICE_NAME}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --service-account=tent-875@${PROJECT_ID}.iam.gserviceaccount.com
+      - --port=8080
+      - --allow-unauthenticated
+      - --cpu-boost
+      - --memory=${_MEMORY}
+      - --cpu=${_CPU}
+      - --concurrency=${_CONCURRENCY}
+      - --min-instances=${_MIN_INSTANCES}
+      - --max-instances=${_MAX_INSTANCES}
+      - --set-env-vars=SPRING_PROFILES_ACTIVE=${_SPRING_PROFILE}
+      # When you're ready to wire secrets from Secret Manager, add e.g.:
+      #   - --set-secrets=SPRING_DATA_MONGODB_URI=mongodb-uri:latest,SPRING_MAIL_PASSWORD=mail-password:latest
+    waitFor: [push-sha]
+
+# Referenced so Cloud Build records image provenance in the build result.
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_SERVICE_NAME}:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_SERVICE_NAME}:latest
+
+# All values below are declared so Cloud Build accepts the yaml, but are intended
+# to be set on the trigger. Anything left blank will cause a clear failure at the
+# gcloud step rather than silently deploying with wrong values.
+substitutions:
+  _REGION: ''
+  _AR_REPO: ''
+  _SERVICE_NAME: ''
+  # Cost-tuned defaults. Spring Boot won't start reliably below 512Mi / 1 vCPU.
+  _MEMORY: 512Mi
+  _CPU: '1'
+  _CONCURRENCY: '80'
+  _MIN_INSTANCES: '0'      # scale to zero when idle — no idle billing
+  _MAX_INSTANCES: '1'      # hard cap to prevent runaway cost from traffic spikes
+  _SPRING_PROFILE: prod
+
+options:
+  # Required when using a custom service account (default logs bucket is not writable).
+  logging: CLOUD_LOGGING_ONLY
+  # No `machineType` set — use the default (e2-standard-2) so builds stay in the
+  # 2,500 free build-minutes/month tier. Larger types disqualify from free tier
+  # and cost ~3x more per minute.
+
+timeout: 1200s
