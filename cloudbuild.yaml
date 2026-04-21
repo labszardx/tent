@@ -81,9 +81,9 @@ images:
 # to be set on the trigger. Anything left blank will cause a clear failure at the
 # gcloud step rather than silently deploying with wrong values.
 substitutions:
-  _REGION: ''
-  _AR_REPO: ''
-  _SERVICE_NAME: ''
+  _REGION: asia-south1
+  _AR_REPO: tent-images
+  _SERVICE_NAME: tent-backend
   # Cost-tuned defaults. Spring Boot won't start reliably below 512Mi / 1 vCPU.
   _MEMORY: 512Mi
   _CPU: '1'
