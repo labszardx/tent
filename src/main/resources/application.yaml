@@ -1,0 +1,25 @@
+server:
+  port: ${PORT:8080}
+spring:
+  mail:
+    host: smtp-relay.brevo.com
+    port: 2525
+    username: 9edfdc001@smtp-brevo.com
+    password: 2TtOGIUMFz4rCLh8
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+  application:
+    name: tent
+
+  data:
+    mongodb:
+      uri: mongodb+srv://zardx:zardx1234@clusterzardx.klxxspu.mongodb.net/tent?retryWrites=true&w=majority&appName=ClusterZardX
+      auto-index-creation: true
+
+app:
+  mail:
+    from: "Tent <arkajit24@gmail.com>"
